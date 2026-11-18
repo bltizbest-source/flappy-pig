@@ -13,83 +13,42 @@ const restartBtn = document.getElementById('restart-btn');
 // Game State
 let gameState = 'START'; // START, PLAYING, GAMEOVER
 let score = 0;
-let highscore = localStorage.getItem('flappyPigHighScore') || 0;
+let highscore = 0;
+try {
+    highscore = Number(localStorage.getItem('flappyPigHighScore')) || 0;
+} catch { /* Session scoring still works when storage is unavailable. */ }
 let frames = 0;
 let animationId;
 
 // Physics / Mechanics Constants
 const GRAVITY = 0.25;
 const FLAP_FORCE = -5.5;
-let gameSpeed = 2.5;
-
-// Variables to keep track of dynamic difficulty
-let baseSpeed = 2.5;
-let speedMultiplier = 1;
-
-// Dimensions
-let LOGICAL_WIDTH = 400;
-let LOGICAL_HEIGHT = 600;
-let CW = LOGICAL_WIDTH;
-let CH = LOGICAL_HEIGHT;
+let CW = 400;
+const CH = 600;
 
 function resizeGame() {
-    const isMobile = window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    
-    let scale;
-    if (isMobile) {
-        LOGICAL_WIDTH = 400;
-        // Make the width match the window horizontally
-        scale = window.innerWidth / LOGICAL_WIDTH;
-        // Extend the height so it covers the whole screen height
-        LOGICAL_HEIGHT = window.innerHeight / scale;
-    } else {
-        LOGICAL_WIDTH = 400;
-        LOGICAL_HEIGHT = 600;
-        const scaleX = window.innerWidth / LOGICAL_WIDTH;
-        const scaleY = window.innerHeight / LOGICAL_HEIGHT;
-        // Scale with a 95% threshold to ensure it doesn't touch the exact edges on desktop
-        scale = Math.min(scaleX, scaleY) * 0.95; 
-    }
-    
-    CW = LOGICAL_WIDTH;
-    CH = LOGICAL_HEIGHT;
-    
-    const displayWidth = LOGICAL_WIDTH * scale;
-    const displayHeight = LOGICAL_HEIGHT * scale;
-    
-    const container = document.getElementById('game-container');
-    container.style.width = `${displayWidth}px`;
-    container.style.height = `${displayHeight}px`;
-    container.style.borderRadius = isMobile ? '0' : '16px';
+    const { width, height } = canvas.getBoundingClientRect();
+    if (!width || !height) return;
 
-    const uiLayer = document.getElementById('ui-layer');
-    uiLayer.style.width = `${LOGICAL_WIDTH}px`;
-    uiLayer.style.height = `${LOGICAL_HEIGHT}px`;
-    uiLayer.style.transform = `scale(${scale})`;
-    uiLayer.style.transformOrigin = 'top left';
+    // The vertical course stays constant. A wider viewport reveals more gates.
+    const previousWidth = CW;
+    CW = CH * width / height;
+    const anchor = CW * 0.2;
+    const shift = anchor - pig.x;
+    pig.x = anchor;
+    for (const gate of obstacles.list) gate.x += shift;
+    obstacles.nextX += shift;
+
+    for (const cloud of bg.clouds) cloud.x *= CW / previousWidth;
+    bg.fitClouds();
+    if (gameState === 'PLAYING') obstacles.fillCourse();
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = displayWidth * dpr;
-    canvas.height = displayHeight * dpr;
-    canvas.style.width = `${displayWidth}px`;
-    canvas.style.height = `${displayHeight}px`;
-    
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(scale * dpr, scale * dpr);
-    
-    if (gameState === 'START') {
-        pig.y = CH / 2;
-    }
-    
-    if (gameState !== 'PLAYING') {
-        if (bg.clouds && bg.clouds.length > 0) draw();
-    }
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(canvas.width / CW, 0, 0, canvas.height / CH, 0, 0);
+    draw();
 }
-
-window.addEventListener('resize', resizeGame);
-
-// Sky Background Colors
-const SKY_COLORS = ["#87CEEB", "#61C5FF", "#add8e6"];
 
 // --- GAME ENTITIES ---
 
@@ -181,9 +140,10 @@ const pig = {
 
 const obstacles = {
     list: [],
-    gap: 140,
+    lastCenter: CH / 2,
+    nextX: 400,
     width: 60,
-    dx: gameSpeed,
+    get dx() { return 2.25 + 0.55 * Math.min(score / 24, 1); },
     draw() {
         for (let i = 0; i < this.list.length; i++) {
             let p = this.list[i];
@@ -203,7 +163,7 @@ const obstacles = {
             ctx.stroke();
 
             // Bottom Pipe
-            let bottomY = p.top + this.gap;
+            let bottomY = p.top + p.gap;
             let bottomHeight = CH - bottomY - 50; // 50 is ground height
             ctx.fillRect(p.x, bottomY, this.width, bottomHeight);
             ctx.strokeRect(p.x, bottomY, this.width, bottomHeight);
@@ -215,21 +175,21 @@ const obstacles = {
             ctx.stroke();
         }
     },
-    update() {
-        // Spawn
-        if (frames % Math.floor(100 / speedMultiplier) === 0) {
-            // vary the y position of the gap
-            let topPosition = (Math.random() * (CH / 2)) + 50;
-            this.list.push({
-                x: CW,
-                top: topPosition,
-                passed: false
-            });
+    fillCourse() {
+        while (this.nextX <= CW + this.width) {
+            const gap = 183 - 23 * Math.min(score / 24, 1);
+            this.lastCenter = Math.max(150, Math.min(400, this.lastCenter + (Math.random() - 0.5) * 104));
+            this.list.push({ x: this.nextX, top: this.lastCenter - gap / 2, gap, passed: false });
+            this.nextX += 260;
         }
+    },
+    update() {
+        this.fillCourse();
+        this.nextX -= this.dx;
 
         for (let i = 0; i < this.list.length; i++) {
             let p = this.list[i];
-            p.x -= this.dx * speedMultiplier;
+            p.x -= this.dx;
 
             // Collision Detection
             // Pig bounding box (approx 30x24)
@@ -240,12 +200,12 @@ const obstacles = {
 
             // Top Pipe BB
             if (pigRight > p.x && pigLeft < p.x + this.width && pigTop < p.top) {
-                triggerGameOver();
+                return triggerGameOver();
             }
             // Bottom Pipe BB
-            let bottomY = p.top + this.gap;
+            let bottomY = p.top + p.gap;
             if (pigRight > p.x && pigLeft < p.x + this.width && pigBot > bottomY) {
-                triggerGameOver();
+                return triggerGameOver();
             }
 
             // Score update
@@ -255,11 +215,7 @@ const obstacles = {
                 scoreDisplay.innerText = score;
                 playScoreSound();
                 
-                // Increase difficulty slightly
-                if (score % 5 === 0) {
-                    speedMultiplier += 0.1;
-                    if (this.gap > 90) this.gap -= 5;
-                }
+
             }
 
             // Remove offscreen
@@ -271,18 +227,21 @@ const obstacles = {
     },
     reset() {
         this.list = [];
-        this.gap = 140;
-        speedMultiplier = 1;
+        this.lastCenter = CH / 2;
+        this.nextX = pig.x + 320;
+        this.fillCourse();
     }
 };
 
 const bg = {
     bgX: 0,
     clouds: [],
-    init() {
-        for(let i=0; i<5; i++) {
+    fitClouds() {
+        const count = Math.max(3, Math.ceil(CW / 85));
+        this.clouds.length = Math.min(count, this.clouds.length);
+        while (this.clouds.length < count) {
             this.clouds.push({
-                x: Math.random() * CW * 2,
+                x: Math.random() * CW,
                 y: Math.random() * (CH / 2),
                 size: Math.random() * 20 + 20,
                 speed: Math.random() * 0.5 + 0.2
@@ -309,9 +268,6 @@ const bg = {
         }
 
         // Scrolling Grass/Ground
-        this.groundDx = obstacles.dx * speedMultiplier;
-        this.bgX = (this.bgX - this.groundDx) % 40;
-        
         ctx.fillStyle = '#7CFC00'; // LawnGreen
         ctx.fillRect(0, CH - 50, CW, 50);
         ctx.fillStyle = '#228B22'; // ForestGreen top border
@@ -325,6 +281,7 @@ const bg = {
         }
     },
     update() {
+        this.bgX = (this.bgX - obstacles.dx) % 40;
         for(let i=0; i<this.clouds.length; i++){
             let c = this.clouds[i];
             c.x -= c.speed;
@@ -337,10 +294,10 @@ const bg = {
 };
 
 // --- AUDIO SYNTHESIS ---
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioCtx;
 
 function playFlapSound() {
-    if(audioCtx.state === 'suspended') audioCtx.resume();
+    if (!audioCtx || audioCtx.state !== 'running') return;
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
     
@@ -359,7 +316,7 @@ function playFlapSound() {
 }
 
 function playScoreSound() {
-    if(audioCtx.state === 'suspended') audioCtx.resume();
+    if (!audioCtx || audioCtx.state !== 'running') return;
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
     
@@ -378,7 +335,7 @@ function playScoreSound() {
 }
 
 function playCrashSound() {
-    if(audioCtx.state === 'suspended') audioCtx.resume();
+    if (!audioCtx || audioCtx.state !== 'running') return;
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
     
@@ -408,16 +365,30 @@ function draw() {
 function update() {
     bg.update();
     pig.update();
-    obstacles.update();
+    if (gameState === 'PLAYING') obstacles.update();
 }
 
-function loop() {
+const stepMs = 1000 / 60;
+let previousTime = null;
+let elapsed = 0;
+
+function loop(now) {
     if (gameState !== 'PLAYING') return;
-    update();
+    elapsed += previousTime === null ? 0 : Math.min(now - previousTime, 64);
+    previousTime = now;
+    while (elapsed >= stepMs && gameState === 'PLAYING') {
+        update();
+        frames++;
+        elapsed -= stepMs;
+    }
     draw();
-    frames++;
-    animationId = requestAnimationFrame(loop);
+    if (gameState === 'PLAYING') animationId = requestAnimationFrame(loop);
 }
+
+document.addEventListener('visibilitychange', () => {
+    previousTime = null;
+    elapsed = 0;
+});
 
 function triggerGameOver() {
     gameState = 'GAMEOVER';
@@ -427,7 +398,7 @@ function triggerGameOver() {
     // Update highscore
     if (score > highscore) {
         highscore = score;
-        localStorage.setItem('flappyPigHighScore', highscore);
+        try { localStorage.setItem('flappyPigHighScore', highscore); } catch {}
     }
     
     finalScoreDisplay.innerText = score;
@@ -444,44 +415,31 @@ function startGame() {
     obstacles.reset();
     startScreen.classList.add('hidden');
     gameOverScreen.classList.add('hidden');
-    if(audioCtx.state === 'suspended') audioCtx.resume();
-    loop();
+    try {
+        const Audio = window.AudioContext || window.webkitAudioContext;
+        if (Audio) audioCtx ||= new Audio();
+        if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
+    } catch {}
+    pig.flap();
+    elapsed = 0;
+    previousTime = null;
+    draw();
+    animationId = requestAnimationFrame(loop);
 }
 
-// Controls
-function handleInteract(e) {
-    if (e.type === 'touchstart' && e.target !== startBtn && e.target !== restartBtn) {
-        // Prevent default to stop zooming/scrolling and double-firing mousedown
-        if (e.cancelable) {
-            e.preventDefault();
-        }
-    }
-
-    if (e.target === startBtn || e.target === restartBtn) {
-        return;
-    }
-
-    if (gameState === 'PLAYING') {
-        pig.flap();
-    } else if (gameState === 'START') {
-        startGame();
-    }
-}
-
-// Event Listeners
-window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space') {
-        if (e.cancelable) e.preventDefault(); // Prevent scrolling
-        if (gameState === 'START' || gameState === 'GAMEOVER') {
-            startGame();
-        } else if (gameState === 'PLAYING') {
-            pig.flap();
-        }
-    }
+document.getElementById('game-container').addEventListener('pointerdown', e => {
+    if (!e.isPrimary || e.button !== 0 || e.target.closest('button')) return;
+    if (gameState === 'PLAYING') pig.flap();
+    else if (gameState === 'START') startGame();
 });
 
-document.addEventListener('mousedown', handleInteract);
-document.addEventListener('touchstart', handleInteract, {passive: false});
+window.addEventListener('keydown', e => {
+    if (e.code !== 'Space') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    if (gameState === 'PLAYING') pig.flap();
+    else startGame();
+});
 
 startBtn.addEventListener('click', startGame);
 restartBtn.addEventListener('click', startGame);
@@ -490,5 +448,6 @@ restartBtn.addEventListener('click', startGame);
 startHighscoreDisplay.innerText = highscore;
 
 // Initial Draw
-bg.init();
 resizeGame();
+new ResizeObserver(resizeGame).observe(canvas);
+window.addEventListener('resize', resizeGame);
