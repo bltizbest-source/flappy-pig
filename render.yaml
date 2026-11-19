@@ -3,5 +3,5 @@ services:
     name: flappy-pig
     runtime: static
     branch: main
-    buildCommand: mkdir -p dist && cp index.html style.css game.js favicon.svg apple-touch-icon.png piggy-icon-192.png piggy-icon-512.png site.webmanifest dist/
+    buildCommand: mkdir -p dist && cp index.html style.css game.js favicon.svg apple-touch-icon.png piggy-icon-192.png piggy-icon-512.png site.webmanifest sw.js dist/
     staticPublishPath: ./dist

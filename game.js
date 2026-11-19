@@ -451,3 +451,10 @@ startHighscoreDisplay.innerText = highscore;
 resizeGame();
 new ResizeObserver(resizeGame).observe(canvas);
 window.addEventListener('resize', resizeGame);
+
+// Cache the game shell for future offline visits on supported browsers.
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+}
