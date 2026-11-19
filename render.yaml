@@ -3,5 +3,5 @@ services:
     name: flappy-pig
     runtime: static
     branch: main
-    buildCommand: mkdir -p dist && cp index.html style.css game.js dist/
+    buildCommand: mkdir -p dist && cp index.html style.css game.js favicon.svg dist/
     staticPublishPath: ./dist
